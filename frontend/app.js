@@ -498,6 +498,8 @@ function showRetention(health) {
 function init() {
   $("api-base").value = server.apiBase;
   $("api-key").value = server.apiKey;
+  // Trang đã được start-public gắn sẵn địa chỉ máy chủ -> không bắt người dùng nhìn thấy/nhập nữa.
+  $("api-base-field").hidden = Boolean(window.L2A_CONFIG && window.L2A_CONFIG.apiBase);
   $("server-form").addEventListener("submit", connectServer);
   $("copy-invite").addEventListener("click", copyInvite);
   api("/api/health").then(showRetention).catch(() => null);
