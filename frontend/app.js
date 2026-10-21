@@ -20,13 +20,19 @@ const state = { jobs: new Map(), merges: new Map(), mergeOrder: [], online: null
 /* ---------- Cấu hình máy chủ ---------- */
 
 function loadServer() {
-  const defaults = { apiBase: (window.L2A_CONFIG && window.L2A_CONFIG.apiBase) || "", apiKey: "" };
+  const configBase = (window.L2A_CONFIG && window.L2A_CONFIG.apiBase) || "";
+  let saved = null;
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-    return saved ? { ...defaults, ...saved } : defaults;
+    saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
   } catch {
-    return defaults;
+    saved = null;
   }
+  // Địa chỉ trong config.js (do start-public cập nhật khi tunnel đổi URL) luôn được ưu tiên,
+  // để người dùng cũ không bị kẹt ở địa chỉ tunnel đã chết.
+  return {
+    apiBase: configBase || (saved && saved.apiBase) || "",
+    apiKey: (saved && saved.apiKey) || "",
+  };
 }
 
 function saveServer(server) {

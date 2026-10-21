@@ -1,9 +1,9 @@
 name: Deploy frontend to GitHub Pages
 
+# Repo hiện dùng Settings → Pages → "Deploy from a branch" (main, /root): GitHub tự đăng mỗi lần push,
+# index.html ở gốc chuyển sang frontend/. Workflow này chỉ dùng nếu đổi Source sang "GitHub Actions"
+# — khi đó bật lại trigger push bên dưới.
 on:
-  push:
-    branches: [main]
-    paths: ["frontend/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:

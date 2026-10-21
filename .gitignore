@@ -4,3 +4,7 @@ __pycache__/
 .coverage
 data/
 cookies*.txt
+
+# start-public
+tools/
+secrets/
