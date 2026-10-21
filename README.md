@@ -33,7 +33,19 @@ YouTube cần một JS runtime (Node.js hoặc Deno) để yt-dlp giải mã —
 | `L2A_CORS_ORIGINS` | — | Origin được gọi API từ trình duyệt, vd `https://ten-ban.github.io` (nhiều origin cách nhau dấu phẩy) |
 | `L2A_API_KEY` | — | Nếu đặt, mọi request `/api/*` phải có header `X-API-Key` (hoặc `?key=`) |
 
-## Deploy
+## Cho người khác dùng (1 click)
+
+Bấm đúp **`start-public.bat`**. Script tự làm mọi thứ:
+
+1. Cài môi trường Python (lần đầu), tải `cloudflared` (kiểm tra chữ ký của Cloudflare).
+2. Bật máy chủ trên máy bạn và mở Cloudflare Tunnel miễn phí → có địa chỉ `https://….trycloudflare.com`.
+3. Ghi địa chỉ đó vào `frontend/config.js` rồi `git push` → trang GitHub Pages tự trỏ đúng máy chủ sau ~1 phút.
+4. In và copy sẵn **link mời**: `https://<ten-ban>.github.io/<repo>/#key=…` — link này **không đổi** giữa các lần chạy, gửi một lần là xong.
+
+Giữ cửa sổ mở trong lúc mọi người dùng; tắt cửa sổ là dừng. Mỗi trình duyệt có danh sách riêng (không thấy file của nhau); file tự xoá sau 6 giờ (`L2A_TTL_HOURS`).
+Muốn thu hồi quyền của những người đã có link: xoá `secrets/api-key.txt` rồi chạy lại để sinh key mới.
+
+## Deploy thủ công
 
 GitHub Pages chỉ chạy web tĩnh, còn việc tải YouTube/Facebook và ffmpeg phải chạy trên server. Vì vậy hệ thống chia làm hai phần:
 
