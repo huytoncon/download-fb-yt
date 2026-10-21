@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 
@@ -8,6 +9,7 @@ from app.services import DownloadService, MergeService, QueueFullError, purge_ge
 from app.store import Status
 
 LINK = ("https://youtu.be/x", "youtube")
+OWNER = "owner-a"
 
 
 def wait_until(predicate, timeout=10):
@@ -27,9 +29,9 @@ def test_rejects_new_jobs_when_queue_is_full(tmp_path):
         raise RuntimeError("stop")
 
     service = DownloadService(tmp_path, max_workers=1, downloader=blocking, max_pending=2)
-    service.submit([LINK, LINK], "mp3", 128)
+    service.submit([LINK, LINK], "mp3", 128, OWNER)
     with pytest.raises(QueueFullError):
-        service.submit([LINK], "mp3", 128)
+        service.submit([LINK], "mp3", 128, OWNER)
     release.set()
     service.shutdown()
 
@@ -42,10 +44,10 @@ def test_retry_runs_only_once_for_concurrent_requests(tmp_path):
         raise RuntimeError("boom")
 
     service = DownloadService(tmp_path, max_workers=2, downloader=failing)
-    job = service.submit([LINK], "mp3", 128)[0]
+    job = service.submit([LINK], "mp3", 128, OWNER)[0]
     wait_until(lambda: service.store.get(job.id).status is Status.ERROR)
 
-    results = [service.retry(job.id), service.retry(job.id)]
+    results = [service.retry(job.id, OWNER), service.retry(job.id, OWNER)]
     assert sum(r is not None for r in results) == 1
     wait_until(lambda: len(calls) == 2 and service.store.get(job.id).status is Status.ERROR)
     service.shutdown()
@@ -57,7 +59,7 @@ def test_failed_download_cleans_partial_files(tmp_path):
         raise RuntimeError("network")
 
     service = DownloadService(tmp_path, max_workers=1, downloader=partial)
-    job = service.submit([LINK], "mp3", 128)[0]
+    job = service.submit([LINK], "mp3", 128, OWNER)[0]
     wait_until(lambda: service.store.get(job.id).status is Status.ERROR)
     assert list(tmp_path.iterdir()) == []
     service.shutdown()
@@ -72,11 +74,11 @@ def test_unexpected_merge_error_hides_details(tmp_path, tone):
         raise OSError(r"C:\secret\path is broken")
 
     downloads = DownloadService(tmp_path / "dl", max_workers=2, downloader=ok)
-    jobs = downloads.submit([LINK, LINK], "mp3", 128)
+    jobs = downloads.submit([LINK, LINK], "mp3", 128, OWNER)
     wait_until(lambda: all(downloads.store.get(j.id).status is Status.DONE for j in jobs))
 
     merges = MergeService(downloads, tmp_path / "merged", merger=broken_merger)
-    merge = merges.submit([j.id for j in jobs], "x", "mp3", 128, 0)
+    merge = merges.submit([j.id for j in jobs], "x", "mp3", 128, 0, OWNER)
     wait_until(lambda: merges.store.get(merge.id).status is Status.ERROR)
     assert merges.store.get(merge.id).error == "Gộp thất bại"
     downloads.shutdown()
@@ -91,3 +93,48 @@ def test_purge_only_removes_generated_files(tmp_path):
     assert purge_generated_files(tmp_path) == 2
     assert sorted(p.name for p in tmp_path.iterdir()) == ["my-song.mp3", "sub"]
     assert purge_generated_files(tmp_path / "missing") == 0
+
+def test_per_owner_pending_limit_does_not_block_others(tmp_path):
+    release = threading.Event()
+
+    def blocking(request, on_progress):
+        release.wait(5)
+        raise RuntimeError("stop")
+
+    service = DownloadService(tmp_path, max_workers=1, downloader=blocking, max_pending_per_owner=2)
+    service.submit([LINK, LINK], "mp3", 128, OWNER)
+    with pytest.raises(QueueFullError, match="chưa xong"):
+        service.submit([LINK], "mp3", 128, OWNER)
+    assert len(service.submit([LINK], "mp3", 128, "owner-b")) == 1
+    release.set()
+    service.shutdown()
+
+
+def test_expire_removes_old_finished_items_and_files(tmp_path, tone):
+    def ok(request, on_progress):
+        path = tone(request.out_dir / f"{request.job_id}.mp3", 0.2)
+        return DownloadResult(path, "t", 0.2)
+
+    service = DownloadService(tmp_path, max_workers=2, downloader=ok)
+    old, fresh = service.submit([LINK, LINK], "mp3", 128, OWNER)
+    wait_until(lambda: all(service.store.get(j.id).status is Status.DONE for j in (old, fresh)))
+    service.store.update(old.id, created_at=time.time() - 3600)
+    old_file = service.store.get(old.id).file_path
+
+    assert service.expire(max_age_seconds=600) == 1
+    assert service.store.get(old.id) is None and not os.path.exists(old_file)
+    assert service.store.get(fresh.id) is not None
+    service.shutdown()
+
+
+def test_owner_cannot_retry_or_delete_others_jobs(tmp_path):
+    def failing(request, on_progress):
+        raise RuntimeError("boom")
+
+    service = DownloadService(tmp_path, max_workers=1, downloader=failing)
+    job = service.submit([LINK], "mp3", 128, OWNER)[0]
+    wait_until(lambda: service.store.get(job.id).status is Status.ERROR)
+    assert service.retry(job.id, "intruder") is None
+    assert service.delete(job.id, "intruder") is False
+    assert service.delete(job.id, OWNER) is True
+    service.shutdown()

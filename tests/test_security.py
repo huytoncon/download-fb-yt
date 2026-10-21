@@ -10,7 +10,7 @@ PAGES_ORIGIN = "https://user.github.io"
 def make_client(tmp_path, **kwargs):
     downloads = DownloadService(tmp_path / "dl", max_workers=1, downloader=lambda *_: None)
     merges = MergeService(downloads, tmp_path / "merged")
-    return TestClient(create_app(downloads, merges, **kwargs))
+    return TestClient(create_app(downloads, merges, **kwargs), headers={"X-Client-Id": "c" * 32})
 
 
 @pytest.fixture

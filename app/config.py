@@ -19,6 +19,10 @@ MAX_MERGE_ITEMS = 100
 MAX_GAP_SECONDS = 10
 MAX_WORKERS = int(os.environ.get("L2A_WORKERS", "3"))
 MAX_PENDING_JOBS = 200  # tổng số job đang chờ/đang chạy trên toàn server
+MAX_PENDING_PER_CLIENT = 30  # mỗi người dùng (trình duyệt) tối đa bấy nhiêu link chưa xong
+# Job/file gộp tự xoá sau khoảng thời gian này để server nhiều người dùng không đầy ổ đĩa.
+ITEM_TTL_SECONDS = int(float(os.environ.get("L2A_TTL_HOURS", "6")) * 3600)
+SWEEP_INTERVAL_SECONDS = 600
 MAX_DURATION_SECONDS = int(os.environ.get("L2A_MAX_DURATION", str(4 * 3600)))
 MAX_FILESIZE_BYTES = 1024 * 1024 * 1024
 SOCKET_TIMEOUT_SECONDS = 30

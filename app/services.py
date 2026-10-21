@@ -2,11 +2,14 @@
 
 import logging
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
 
-from app.config import MAX_PENDING_JOBS
+from app.config import MAX_PENDING_JOBS, MAX_PENDING_PER_CLIENT
+
+MAX_PENDING_MERGES_PER_CLIENT = 2
 from app.downloader import (
     DownloadRequest,
     DownloadResult,
@@ -67,6 +70,16 @@ def _is_pending(job: Job) -> bool:
     return not job.status.is_finished
 
 
+def _expire(store: Store, max_age_seconds: float) -> int:
+    """Xoá các mục đã xong/lỗi quá hạn cùng file của chúng; trả về số mục đã xoá."""
+    cutoff = time.time() - max_age_seconds
+    expired = store.list_where(lambda item: item.status.is_finished and item.created_at < cutoff)
+    for item in expired:
+        if store.remove_if(item.id, lambda current: current.status.is_finished) is not None:
+            _remove_file(item.file_path)
+    return len(expired)
+
+
 class DownloadService:
     def __init__(
         self,
@@ -74,18 +87,27 @@ class DownloadService:
         max_workers: int,
         downloader: Downloader = download_audio,
         max_pending: int = MAX_PENDING_JOBS,
+        max_pending_per_owner: int = MAX_PENDING_PER_CLIENT,
     ) -> None:
         self.store: Store[Job] = Store()
         self._out_dir = out_dir
         self._downloader = downloader
         self._max_pending = max_pending
+        self._max_pending_per_owner = max_pending_per_owner
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="download")
 
-    def submit(self, links: list[tuple[str, str]], audio_format: str, bitrate: int) -> list[Job]:
+    def submit(self, links: list[tuple[str, str]], audio_format: str, bitrate: int, owner: str) -> list[Job]:
         if self.store.count(_is_pending) + len(links) > self._max_pending:
-            raise QueueFullError(f"Hàng đợi đầy (tối đa {self._max_pending} link chưa xử lý xong), thử lại sau")
+            raise QueueFullError("Máy chủ đang bận (hàng đợi đầy), thử lại sau ít phút")
+        owner_pending = self.store.count(lambda j: j.owner == owner and _is_pending(j))
+        if owner_pending + len(links) > self._max_pending_per_owner:
+            raise QueueFullError(
+                f"Bạn đang có {owner_pending} link chưa xong (tối đa {self._max_pending_per_owner}), chờ xong rồi thêm tiếp"
+            )
         jobs = [
-            self.store.add(Job(id=new_id(), url=url, source=source, audio_format=audio_format, bitrate=bitrate))
+            self.store.add(
+                Job(id=new_id(), url=url, source=source, audio_format=audio_format, bitrate=bitrate, owner=owner)
+            )
             for url, source in links
         ]
         for job in jobs:
@@ -121,17 +143,27 @@ class DownloadService:
         if updated is None:  # bị xoá trong lúc tải
             _remove_file(str(result.file_path))
 
-    def delete(self, job_id: str) -> bool:
-        job = self.store.remove(job_id)
+    def list_for(self, owner: str) -> list[Job]:
+        return self.store.list_where(lambda j: j.owner == owner)
+
+    def get_for(self, job_id: str, owner: str) -> Job | None:
+        job = self.store.get(job_id)
+        return job if job is not None and job.owner == owner else None
+
+    def delete(self, job_id: str, owner: str) -> bool:
+        job = self.store.remove_if(job_id, lambda j: j.owner == owner)
         if job is None:
             return False
         _remove_file(job.file_path)
         return True
 
-    def retry(self, job_id: str) -> Job | None:
+    def expire(self, max_age_seconds: float) -> int:
+        return _expire(self.store, max_age_seconds)
+
+    def retry(self, job_id: str, owner: str) -> Job | None:
         updated = self.store.update_if(
             job_id,
-            lambda job: job.status is Status.ERROR,
+            lambda job: job.owner == owner and job.status is Status.ERROR,
             status=Status.QUEUED,
             progress=0.0,
             error=None,
@@ -160,10 +192,10 @@ class MergeService:
         self._merger = merger
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="merge")
 
-    def _source_files(self, job_ids: list[str]) -> list[Path]:
+    def _source_files(self, job_ids: list[str], owner: str) -> list[Path]:
         files: list[Path] = []
         for job_id in job_ids:
-            job = self._downloads.store.get(job_id)
+            job = self._downloads.get_for(job_id, owner)
             if job is None:
                 raise MergeValidationError(f"Không tìm thấy audio {job_id}")
             if job.status is not Status.DONE or not job.file_path:
@@ -171,10 +203,14 @@ class MergeService:
             files.append(Path(job.file_path))
         return files
 
-    def submit(self, job_ids: list[str], name: str, audio_format: str, bitrate: int, gap_seconds: float) -> Merge:
+    def submit(
+        self, job_ids: list[str], name: str, audio_format: str, bitrate: int, gap_seconds: float, owner: str
+    ) -> Merge:
         if len(job_ids) < 2:
             raise MergeValidationError("Chọn ít nhất 2 đoạn audio để gộp")
-        self._source_files(job_ids)
+        if self.store.count(lambda m: m.owner == owner and not m.status.is_finished) >= MAX_PENDING_MERGES_PER_CLIENT:
+            raise MergeValidationError("Bạn đang có bản gộp chưa xong, chờ xong rồi gộp tiếp")
+        self._source_files(job_ids, owner)
         merge_id = new_id()
         merge = Merge(
             id=merge_id,
@@ -183,6 +219,7 @@ class MergeService:
             audio_format=audio_format,
             bitrate=bitrate,
             gap_seconds=gap_seconds,
+            owner=owner,
         )
         self.store.add(merge)
         self._executor.submit(self._run, merge_id)
@@ -194,7 +231,7 @@ class MergeService:
             return
         output = self._out_dir / f"{merge.id}.{merge.audio_format}"
         try:
-            inputs = self._source_files(list(merge.job_ids))
+            inputs = self._source_files(list(merge.job_ids), merge.owner)
             self._merger(inputs, output, merge.audio_format, merge.bitrate, merge.gap_seconds)
         except Exception as exc:
             logger.exception("Gộp thất bại: %s", merge_id)
@@ -206,12 +243,22 @@ class MergeService:
         if self.store.update(merge_id, status=Status.DONE, file_path=str(output)) is None:
             _remove_file(str(output))
 
-    def delete(self, merge_id: str) -> bool:
-        merge = self.store.remove(merge_id)
+    def list_for(self, owner: str) -> list[Merge]:
+        return self.store.list_where(lambda m: m.owner == owner)
+
+    def get_for(self, merge_id: str, owner: str) -> Merge | None:
+        merge = self.store.get(merge_id)
+        return merge if merge is not None and merge.owner == owner else None
+
+    def delete(self, merge_id: str, owner: str) -> bool:
+        merge = self.store.remove_if(merge_id, lambda m: m.owner == owner)
         if merge is None:
             return False
         _remove_file(merge.file_path)
         return True
+
+    def expire(self, max_age_seconds: float) -> int:
+        return _expire(self.store, max_age_seconds)
 
     def purge_orphans(self) -> int:
         return purge_generated_files(self._out_dir)

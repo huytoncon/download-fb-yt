@@ -37,8 +37,9 @@
         </label>
         <div class="row">
           <button type="submit" class="primary">Lưu &amp; kết nối</button>
-          <span id="server-msg" class="msg" role="status"></span>
+          <button type="button" id="copy-invite">Sao chép link mời</button>
         </div>
+        <p id="server-msg" class="msg" role="status"></p>
       </form>
     </details>
   </div>
@@ -84,7 +85,7 @@
       <button id="select-all" class="ghost">Chọn tất cả đã xong</button>
       <button id="clear-errors" class="ghost">Xoá mục lỗi</button>
     </header>
-    <p class="note">Tích chọn để đưa sang bàn gộp — thứ tự tích là thứ tự gộp.</p>
+    <p class="note">Tích chọn để đưa sang bàn gộp — thứ tự tích là thứ tự gộp. <span id="retention"></span></p>
     <ul id="jobs" class="list"></ul>
     <p id="jobs-empty" class="empty">Chưa có link nào. Dán link ở bước 01 để bắt đầu.</p>
   </section>

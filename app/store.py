@@ -1,5 +1,7 @@
 """Kho lưu trạng thái trong bộ nhớ, an toàn đa luồng, bản ghi bất biến."""
 
+from __future__ import annotations  # Store.list che kiểu list trong thân class
+
 import threading
 import time
 import uuid
@@ -32,6 +34,7 @@ class Job:
     source: str
     audio_format: str
     bitrate: int
+    owner: str = ""
     status: Status = Status.QUEUED
     progress: float = 0.0
     title: str | None = None
@@ -43,6 +46,7 @@ class Job:
     def to_public(self) -> dict:
         data = asdict(self)
         data.pop("file_path")
+        data.pop("owner")
         data["status"] = self.status.value
         data["has_file"] = self.status is Status.DONE and self.file_path is not None
         return data
@@ -56,6 +60,7 @@ class Merge:
     audio_format: str
     bitrate: int
     gap_seconds: float
+    owner: str = ""
     status: Status = Status.QUEUED
     file_path: str | None = None
     error: str | None = None
@@ -64,6 +69,7 @@ class Merge:
     def to_public(self) -> dict:
         data = asdict(self)
         data.pop("file_path")
+        data.pop("owner")
         data["job_ids"] = list(self.job_ids)
         data["status"] = self.status.value
         data["has_file"] = self.status is Status.DONE and self.file_path is not None
@@ -113,6 +119,16 @@ class Store(Generic[T]):
     def count(self, predicate: Callable[[T], bool]) -> int:
         with self._lock:
             return sum(1 for item in self._items.values() if predicate(item))
+
+    def list_where(self, predicate: Callable[[T], bool]) -> list[T]:
+        return [item for item in self.list() if predicate(item)]
+
+    def remove_if(self, item_id: str, predicate: Callable[[T], bool]) -> T | None:
+        with self._lock:
+            current = self._items.get(item_id)
+            if current is None or not predicate(current):
+                return None
+            return self._items.pop(item_id)
 
     def remove(self, item_id: str) -> T | None:
         with self._lock:

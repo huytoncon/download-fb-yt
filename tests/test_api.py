@@ -8,6 +8,8 @@ from app.main import create_app
 from app.services import DownloadService, MergeService
 
 TIMEOUT_SECONDS = 15
+CLIENT_A = "a" * 32
+CLIENT_B = "b" * 32
 
 
 def wait_for(client, path, predicate):
@@ -32,7 +34,7 @@ def client(tmp_path, tone):
 
     downloads = DownloadService(tmp_path / "dl", max_workers=2, downloader=fake_downloader)
     merges = MergeService(downloads, tmp_path / "merged")
-    with TestClient(create_app(downloads, merges)) as test_client:
+    with TestClient(create_app(downloads, merges), headers={"X-Client-Id": CLIENT_A}) as test_client:
         yield test_client
 
 
@@ -117,3 +119,30 @@ def test_unknown_file_ids_return_404(client):
 def test_serves_web_ui(client):
     res = client.get("/")
     assert res.status_code == 200 and "Link2Audio" in res.text
+
+def test_each_browser_only_sees_and_controls_its_own_items(client):
+    client.post("/api/jobs", json={"links": "https://youtu.be/1\nhttps://youtu.be/2"})
+    jobs = wait_for(client, "/api/jobs", all_finished)
+    other = {"X-Client-Id": CLIENT_B}
+
+    assert client.get("/api/jobs", headers=other).json()["data"] == []
+    assert client.get(f"/api/jobs/{jobs[0]['id']}/file", headers=other).status_code == 404
+    assert client.delete(f"/api/jobs/{jobs[0]['id']}", headers=other).status_code == 404
+    res = client.post("/api/merges", json={"job_ids": [j["id"] for j in jobs]}, headers=other)
+    assert res.status_code == 400 and "Không tìm thấy" in res.json()["error"]
+    assert len(client.get("/api/jobs").json()["data"]) == 2  # dữ liệu của A vẫn còn
+
+
+def test_media_url_can_pass_client_id_in_query(client):
+    client.post("/api/jobs", json={"links": "https://youtu.be/1"})
+    job = wait_for(client, "/api/jobs", all_finished)[0]
+    url = f"/api/jobs/{job['id']}/file?client={CLIENT_A}"
+    assert client.get(url, headers={"X-Client-Id": ""}).status_code == 200
+    # client qua query chỉ được nhận ở route tải file
+    assert client.get(f"/api/jobs?client={CLIENT_A}", headers={"X-Client-Id": ""}).status_code == 400
+
+
+@pytest.mark.parametrize("bad", ["", "short", "x" * 65, "has space in it ok?"])
+def test_rejects_missing_or_malformed_client_id(client, bad):
+    res = client.get("/api/jobs", headers={"X-Client-Id": bad})
+    assert res.status_code == 400 and not res.json()["success"]

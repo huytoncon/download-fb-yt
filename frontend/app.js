@@ -2,6 +2,7 @@
 
 const POLL_MS = 1500;
 const STORAGE_KEY = "l2a.server";
+const CLIENT_KEY = "l2a.client";
 const STATUS_LABEL = {
   queued: "Đang chờ",
   downloading: "Đang tải",
@@ -36,16 +37,68 @@ function saveServer(server) {
   }
 }
 
-let server = loadServer();
+/** Đọc cấu hình từ link mời dạng ...#server=<url>&key=<key>, lưu lại rồi xoá khỏi thanh địa chỉ. */
+function applyInviteLink() {
+  const params = new URLSearchParams(location.hash.slice(1));
+  const apiBase = params.get("server");
+  const apiKey = params.get("key");
+  if (apiBase === null && apiKey === null) return;
+  server = {
+    apiBase: apiBase !== null && /^https?:\/\/\S+$/i.test(apiBase) ? apiBase : server.apiBase,
+    apiKey: apiKey !== null ? apiKey : server.apiKey,
+  };
+  saveServer(server);
+  history.replaceState(null, "", location.pathname + location.search);
+}
 
-function apiUrl(path, withKey = false) {
+function inviteLink() {
+  const params = new URLSearchParams();
+  const defaultBase = (window.L2A_CONFIG && window.L2A_CONFIG.apiBase) || "";
+  if (server.apiBase && server.apiBase !== defaultBase) params.set("server", server.apiBase);
+  if (server.apiKey) params.set("key", server.apiKey);
+  const hash = params.toString();
+  return `${location.origin}${location.pathname}${hash ? `#${hash}` : ""}`;
+}
+
+async function copyInvite() {
+  const link = inviteLink();
+  try {
+    await navigator.clipboard.writeText(link);
+    showMessage($("server-msg"), "Đã sao chép link mời — gửi cho người khác là dùng được ngay.", "success");
+  } catch {
+    showMessage($("server-msg"), link, "success");
+  }
+}
+
+function loadClientId() {
+  const fresh = () =>
+    (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`).replace(/[^A-Za-z0-9]/g, "");
+  try {
+    let id = localStorage.getItem(CLIENT_KEY);
+    if (!id || !/^[A-Za-z0-9_-]{16,64}$/.test(id)) {
+      id = fresh();
+      localStorage.setItem(CLIENT_KEY, id);
+    }
+    return id;
+  } catch {
+    return fresh(); // không có storage: danh sách chỉ giữ trong phiên này
+  }
+}
+
+let server = loadServer();
+applyInviteLink();
+const clientId = loadClientId();
+
+function apiUrl(path, forMedia = false) {
   const base = server.apiBase.replace(/\/+$/, "");
-  const url = `${base}${path}`;
-  return withKey && server.apiKey ? `${url}?key=${encodeURIComponent(server.apiKey)}` : url;
+  if (!forMedia) return `${base}${path}`;
+  const params = new URLSearchParams({ client: clientId });
+  if (server.apiKey) params.set("key", server.apiKey);
+  return `${base}${path}?${params}`;
 }
 
 async function api(path, options = {}) {
-  const headers = { "Content-Type": "application/json" };
+  const headers = { "Content-Type": "application/json", "X-Client-Id": clientId };
   if (server.apiKey) headers["X-API-Key"] = server.apiKey;
   const res = await fetch(apiUrl(path), { ...options, headers });
   let body;
@@ -80,7 +133,7 @@ async function connectServer(event) {
   saveServer(server);
   showMessage($("server-msg"), "Đang kết nối...");
   try {
-    await api("/api/health");
+    showRetention(await api("/api/health"));
     setOnline(true);
     showMessage($("server-msg"), "Kết nối thành công.", "success");
     await refresh();
@@ -430,10 +483,18 @@ async function poll() {
   setTimeout(poll, POLL_MS);
 }
 
+function showRetention(health) {
+  if (health && health.ttl_hours) {
+    $("retention").textContent = `File được giữ trên máy chủ khoảng ${Math.round(health.ttl_hours)} giờ — nhớ tải về.`;
+  }
+}
+
 function init() {
   $("api-base").value = server.apiBase;
   $("api-key").value = server.apiKey;
   $("server-form").addEventListener("submit", connectServer);
+  $("copy-invite").addEventListener("click", copyInvite);
+  api("/api/health").then(showRetention).catch(() => null);
   $("links").addEventListener("input", countLinks);
   $("links").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) submitLinks();
