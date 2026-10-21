@@ -1,0 +1,9 @@
+.venv
+.git
+.github
+data
+tests
+__pycache__
+.pytest_cache
+.coverage
+cookies*.txt

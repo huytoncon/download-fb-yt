@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src *; media-src *; object-src 'none'; base-uri 'self'; form-action 'self'">
+<meta name="referrer" content="no-referrer">
+<meta name="description" content="Dán link YouTube / Facebook, chuyển thành audio và gộp nhiều đoạn thành một file.">
+<title>Link2Audio</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23e8552d'/%3E%3Cpath d='M8 20v-8M13 24V8M18 18v-4M23 22V10' stroke='%23fff' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="masthead">
+  <div class="masthead-inner">
+    <div class="brand">
+      <div class="eq" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+      <div>
+        <h1>Link2Audio</h1>
+        <p class="tagline">Dán link YouTube &amp; Facebook — nhận lại audio, gộp thành một bản.</p>
+      </div>
+    </div>
+    <details class="server" id="server-panel">
+      <summary>
+        <span class="dot" id="server-dot" aria-hidden="true"></span>
+        <span id="server-label">Máy chủ</span>
+      </summary>
+      <form class="server-form" id="server-form">
+        <label>Địa chỉ API
+          <input id="api-base" type="url" placeholder="vd: http://127.0.0.1:8000 (trống = cùng trang)">
+        </label>
+        <label>API key <span class="hint">(nếu máy chủ yêu cầu)</span>
+          <input id="api-key" type="password" autocomplete="off">
+        </label>
+        <div class="row">
+          <button type="submit" class="primary">Lưu &amp; kết nối</button>
+          <span id="server-msg" class="msg" role="status"></span>
+        </div>
+      </form>
+    </details>
+  </div>
+</header>
+
+<main class="board">
+  <section class="panel panel-input" aria-labelledby="step1">
+    <header class="panel-head">
+      <span class="step">01</span>
+      <h2 id="step1">Dán link</h2>
+      <span id="link-count" class="counter">0 link</span>
+    </header>
+    <textarea id="links" rows="6" spellcheck="false" aria-label="Danh sách link"
+      placeholder="Mỗi dòng một link — hoặc cách nhau bởi dấu cách, dấu phẩy&#10;https://www.youtube.com/watch?v=...&#10;https://www.facebook.com/watch/?v=..."></textarea>
+    <div class="controls">
+      <label>Định dạng
+        <select id="format">
+          <option value="mp3">MP3</option>
+          <option value="m4a">M4A (AAC)</option>
+          <option value="wav">WAV</option>
+        </select>
+      </label>
+      <label>Chất lượng
+        <select id="bitrate">
+          <option value="128">128 kbps</option>
+          <option value="192" selected>192 kbps</option>
+          <option value="256">256 kbps</option>
+          <option value="320">320 kbps</option>
+        </select>
+      </label>
+      <span class="spacer"></span>
+      <span class="kbd-hint">Ctrl + Enter</span>
+      <button id="submit" class="primary big">Chuyển thành audio</button>
+    </div>
+    <p id="submit-msg" class="msg" role="status"></p>
+  </section>
+
+  <section class="panel panel-jobs" aria-labelledby="step2">
+    <header class="panel-head">
+      <span class="step">02</span>
+      <h2 id="step2">Hàng xử lý</h2>
+      <span class="spacer"></span>
+      <button id="select-all" class="ghost">Chọn tất cả đã xong</button>
+      <button id="clear-errors" class="ghost">Xoá mục lỗi</button>
+    </header>
+    <p class="note">Tích chọn để đưa sang bàn gộp — thứ tự tích là thứ tự gộp.</p>
+    <ul id="jobs" class="list"></ul>
+    <p id="jobs-empty" class="empty">Chưa có link nào. Dán link ở bước 01 để bắt đầu.</p>
+  </section>
+
+  <section class="panel panel-merge" aria-labelledby="step3">
+    <header class="panel-head">
+      <span class="step">03</span>
+      <h2 id="step3">Bàn gộp</h2>
+      <span id="merge-total" class="counter"></span>
+    </header>
+    <ol id="merge-order" class="order"></ol>
+    <p id="merge-empty" class="empty">Chọn ít nhất 2 đoạn audio đã xong ở bước 02.</p>
+    <div class="controls">
+      <label class="grow">Tên file
+        <input id="merge-name" type="text" maxlength="120" placeholder="vd: tong-hop-bai-giang">
+      </label>
+      <label>Khoảng lặng (s)
+        <input id="merge-gap" type="number" min="0" max="10" step="0.5" value="0">
+      </label>
+      <label>Định dạng
+        <select id="merge-format">
+          <option value="mp3">MP3</option>
+          <option value="m4a">M4A (AAC)</option>
+          <option value="wav">WAV</option>
+        </select>
+      </label>
+      <label>Chất lượng
+        <select id="merge-bitrate">
+          <option value="128">128 kbps</option>
+          <option value="192" selected>192 kbps</option>
+          <option value="256">256 kbps</option>
+          <option value="320">320 kbps</option>
+        </select>
+      </label>
+    </div>
+    <button id="merge" class="primary big wide" disabled>Gộp thành một file</button>
+    <p id="merge-msg" class="msg" role="status"></p>
+
+    <h3 class="sub">Bản đã gộp</h3>
+    <ul id="merges" class="list"></ul>
+    <p id="merges-empty" class="empty">Chưa có bản gộp nào.</p>
+  </section>
+</main>
+
+<footer class="foot">
+  Chỉ tải nội dung bạn có quyền sử dụng. Xử lý bằng yt-dlp &amp; ffmpeg trên máy chủ của bạn.
+</footer>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
